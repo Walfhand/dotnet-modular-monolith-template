@@ -1,0 +1,51 @@
+services:
+  api:
+    build:
+      context: src/backend
+      dockerfile: src/Api/Dockerfile
+    environment:
+      ASPNETCORE_HTTP_PORTS: 8080
+      Postgres__ConnexionString: ${POSTGRES__CONNEXIONSTRING:?Copy .env.example to .env}
+      ClientOrigin: http://127.0.0.1:${CLIENT_PORT:-3000}
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/alive"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 60s
+
+  client:
+    build: src/client
+    environment:
+      APP_API_URL: http://127.0.0.1:${API_PORT:-8080}/api/v1
+    ports:
+      - "127.0.0.1:${CLIENT_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  database:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?Copy .env.example to .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Copy .env.example to .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Copy .env.example to .env}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - database_data:/var/lib/postgresql
+
+volumes:
+  database_data:
