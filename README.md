@@ -1,49 +1,180 @@
 # .NET Modular Monolith Template
 
-A .NET 11 starter for a modular monolith. Group use cases into vertical slices and deploy the backend as a single application. The sample Sales module creates orders through Wolverine HTTP and persists them with EF Core and PostgreSQL.
+A .NET 11 backend template for a modular monolith with vertical slices, Wolverine HTTP and CQRS, EF Core, and PostgreSQL. Business operations return typed outcomes with C# 15 unions, and architecture tests check domain dependencies and module cycles.
 
-## Quick start
-
-Choose **Use this template** on GitHub and clone your new repository. With Docker Compose and Make installed, run from the repository root.
+Choose **Use this template** on GitHub and clone your new repository. With Docker Compose installed, start the API and PostgreSQL.
 
 ```sh
 cp .env.example .env
-make up-all
+docker compose up --build
 ```
 
-Open the [React frontend](http://127.0.0.1:3000) or explore the API in [Scalar](http://127.0.0.1:8080/scalar). The OpenAPI document is at `http://127.0.0.1:8080/openapi/v1.json`. Set the host ports in `.env`, and use `make down` to stop the services and keep the database volume.
+Open [Scalar](http://127.0.0.1:8080/scalar) to explore the API. For a React frontend, a combined Docker Compose setup, and Playwright tests, use the [full-stack template](https://github.com/Walfhand/dotnet-react-fullstack-template).
 
-Create an order to see the first slice in action.
+## Template goals
 
-```sh
-curl -i http://127.0.0.1:8080/api/v1/orders \
-  -H 'Content-Type: application/json' \
-  -d '{"orderLines":[{"productId":7,"quantity":3}]}'
+- Group Wolverine HTTP endpoints and command handlers by use case
+- Use DDD to keep the domain model explicit and protected
+- Use Vertical Slice to keep each use case cohesive and easy to change
+- Include quality tooling: logging, OpenAPI, migrations, CQRS
+
+## High-level architecture
+
+### Overview
+
+```
+src/
+├── Api/                         # API host (entry point)
+├── Engine/                      # Shared core/business layer
 ```
 
-## Architecture
+### Key areas
 
-- **Modular monolith and vertical slices.** Organize features by module, with each use case owning its request, handler, HTTP endpoint, and outcomes. The Sales example uses an order aggregate and value objects. [CreateOrder slice](src/backend/src/Api/Modules/Sales/Features/Orders/CreateOrderRepr)
-- **Wolverine HTTP and CQRS.** Run command handlers with an EF Core transaction. Synchronous domain reactions share the active `DbContext` and can raise further events. Integration events use the durable PostgreSQL outbox for delivery after commit. [Backend guide](src/backend/README.md)
-- **Result pattern with C# 15 unions.** The order handler returns `Outcome<OrderCreated, CreateOrderError>`. The slice declares its success and error cases in a dedicated file. The endpoint handles each case and returns typed JSON with a stable error code. The compiler checks that the switch covers every case. [CreateOrderOutcomes.cs](src/backend/src/Api/Modules/Sales/Features/Orders/CreateOrderRepr/CreateOrderOutcomes.cs)
-- **React starter.** Build the UI with React 19, Vite, and TypeScript. The starter includes routing, React Query, and example component tests. [Frontend source](src/client)
+- **Api**: configuration, routes, OpenAPI, integrations, DI, web pipeline.
+- **Engine**: domain/core, infrastructure, events, logging, persistence, CQRS, etc.
+
+## DDD (Domain-Driven Design)
+
+The domain model lives under `Api/Domain/` and is organized around aggregates and domain concepts.
+
+Typical structure:
+
+```
+Api/Domain/
+├── <BoundedContext>/
+│   ├── AggregateRoots/
+│   ├── AggregateRoots/Entities/
+│   ├── AggregateRoots/ValueObjects/
+│   └── Services/
+```
+
+Example:
+
+```
+Api/Domain/Orders/
+├── AggregateRoots/
+├── AggregateRoots/Entities/
+└── AggregateRoots/ValueObjects/
+```
+
+Guidelines:
+
+- Keep invariants inside aggregate roots
+- Use value objects for strongly-typed concepts
+- Keep domain services focused on domain logic only
+
+## Vertical Slice Architecture
+
+Features are grouped by module and use case so each slice contains everything it needs:
+
+```
+Api/Modules/
+├── Sales/
+│   └── Features/
+│       └── Orders/
+│           └── CreateOrderRepr/
+│               ├── CreateOrder.cs
+│               └── CreateOrderOutcomes.cs
+```
+
+A slice typically contains:
+
+- Request and outcome contracts
+- Wolverine HTTP endpoint and message handler for the use case
+
+This avoids deep horizontal layers and makes each use case easy to find and change.
+
+## Project structure
+
+```
+.
+├── src/
+│   ├── Api/
+│   │   ├── Configuration/       # Configuration extensions (OpenAPI, logging...)
+│   │   ├── Domain/              # DDD domain model
+│   │   ├── Modules/             # Vertical slices by module/feature
+│   │   ├── Infrastructure/      # API infrastructure
+│   │   ├── Program.cs           # Entry point
+│   │   └── ...
+│   └── Engine/
+│       ├── Core/                # Domain core
+│       ├── Logging/             # Logging
+│       ├── ProblemDetails/      # HTTP error details
+│       ├── Outcomes/            # Business operation outcomes
+│       ├── Wolverine/           # CQRS / messaging
+│       └── ...
+├── tests/                       # Tests
+└── README.md
+```
+
+## OpenAPI / Scalar
+
+The template exposes OpenAPI docs and Scalar UI.
+
+- OpenAPI: `/openapi/{documentName}.json`
+- Scalar UI: `/scalar`
+
+## Local usage (Docker)
+
+From the repo root:
+
+```
+make up-backend
+```
 
 ## Tests
 
-Run the .NET suite with the .NET 11 SDK and Docker.
+With the .NET 11 SDK and Docker running, execute `dotnet test BackendTemplate.slnx` from the repository root.
 
-```sh
-dotnet test src/backend/BackendTemplate.slnx
+The unit test project includes architecture rules for domain dependencies and module cycles. The integration suite uses PostgreSQL to exercise transaction rollback and the outbox.
+
+## Migrations
+
+A helper Makefile is available in `src/Api`:
+
+```
+make add-migration name=YourMigrationName
 ```
 
-Architecture tests check that domain types stay independent of the application and infrastructure layers and that modules have no dependency cycles. PostgreSQL integration tests cover nested domain events, rollback, and manual outbox writes.
+This runs:
 
-With Node.js 24, run the frontend tests or start the full stack in an isolated Docker environment for Playwright.
-
-```sh
-npm --prefix src/client ci
-npm --prefix src/client test -- --run
-make e2e-local-all
+```
+dotnet ef migrations add YourMigrationName --project ./ -o ./Infrastructure/Persistence/Migrations
 ```
 
-Playwright checks the OpenAPI schemas, order creation, typed error responses, and browser access to the API. Repositories created from this template include a [GitHub Actions workflow](.github/workflows/fullstack-ci.yml) for the .NET and Playwright suites.
+## Docker details
+
+The API container is built from:
+
+- build context: the repository root
+- dockerfile: `src/Api/Dockerfile`
+
+The database is PostgreSQL and is configured via `.env`.
+
+## Environment variables
+
+Compose reads the database connection, published port, and allowed client origin from the root `.env`. Set `CLIENT_ORIGIN` when using a frontend on a different origin.
+
+## Architecture conventions
+
+### 1. Feature-based modules (Vertical Slice)
+Each feature lives in its own folder under `Api/Modules/<Module>/Features/...`.
+
+### 2. CQRS and events
+
+Inject `AppDbContext` into a Wolverine command handler to use the EF Core transaction and outbox. The same pipeline applies when a caller invokes the command with `IMessageBus.InvokeAsync` outside HTTP.
+
+Define synchronous domain reactions as public classes implementing `ITransactionalDomainEventHandler` in the API assembly. The template discovers them at startup and registers them as scoped services. Reactions can inject scoped dependencies in their constructors and receive the active `DbContext` when invoked. Wolverine's EF Core event hook drains any further events they raise before commit. Map events intended for asynchronous delivery to an `IIntegrationEvent` with `IEventMapper`.
+
+For writes outside a Wolverine handler, use the scoped `IDbContextOutbox<AppDbContext>`. Stage changes on `outbox.DbContext`, queue any follow-up commands with `outbox.SendAsync` and call `outbox.SaveChangesAndFlushMessagesAsync`. The same event hook runs and queued commands are delivered after commit.
+
+Each `InvokeAsync` starts its own Wolverine handler execution. To run two operations atomically, call their application methods in one handler and pass them the same `AppDbContext`.
+
+### 3. Centralized web pipeline
+`ApplicationConfiguration` centralizes app setup:
+- services
+- middleware
+- OpenAPI
+- migrations
+
+Business operations return the C# 15 union `Outcome<TSuccess, TError>`. Each use case declares its success type and error union in an `*Outcomes.cs` file. `CreateOrderOutcomes.cs` declares `OrderCreated` and `CreateOrderError`. The endpoint returns each typed error as JSON with a stable `code` and any relevant values. Missing lines return `400 Bad Request`, invalid values return `422 Unprocessable Content`, and a successful command returns `201 Created`. The API build treats non-exhaustive switch expressions as errors.
